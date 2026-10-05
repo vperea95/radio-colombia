@@ -82,16 +82,13 @@ class _HomeScreenState extends State<HomeScreen> {
 
   static List<_Department> _buildDepartments(List<Station> stations) {
     final counts = <String, int>{};
-    final labels = <String, String>{};
     for (final station in stations) {
-      if (station.state.isEmpty) continue;
-      final key = normalize(station.state);
-      counts[key] = (counts[key] ?? 0) + 1;
-      labels.putIfAbsent(key, () => station.state);
+      if (station.department.isEmpty) continue;
+      counts[station.department] = (counts[station.department] ?? 0) + 1;
     }
     final list = <_Department>[
       for (final entry in counts.entries)
-        if (entry.value >= 2) (key: entry.key, label: labels[entry.key]!, count: entry.value),
+        (key: entry.key, label: entry.key, count: entry.value),
     ];
     list.sort((a, b) => b.count.compareTo(a.count));
     return list;
@@ -101,10 +98,11 @@ class _HomeScreenState extends State<HomeScreen> {
     final query = normalize(_query);
     return _stations.where((station) {
       if (_onlyFavorites && !widget.favorites.isFavorite(station.id)) return false;
-      if (_departmentKey != null && normalize(station.state) != _departmentKey) return false;
+      if (_departmentKey != null && station.department != _departmentKey) return false;
       if (query.isEmpty) return true;
       return normalize(station.name).contains(query) ||
           normalize(station.state).contains(query) ||
+          normalize(station.department).contains(query) ||
           station.tags.any((tag) => normalize(tag).contains(query));
     }).toList();
   }

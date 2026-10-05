@@ -1,10 +1,12 @@
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
 import 'package:just_audio/just_audio.dart';
 import 'package:just_audio_background/just_audio_background.dart';
 
 import '../models/station.dart';
+import 'playback_locks.dart';
 
 enum PlayerStatus { idle, loading, playing, paused, error }
 
@@ -29,8 +31,17 @@ class RadioPlayer extends ChangeNotifier {
   String? _errorMessage;
   DateTime? _pausedAt;
 
+  /// El usuario quiere escuchar (no pausó ni detuvo).
+  bool _wantsPlaying = false;
+
+  /// La emisora actual llegó a sonar; solo entonces se reconecta sola si se cae.
+  bool _hasPlayed = false;
+  int _reconnectAttempts = 0;
+  Timer? _reconnectTimer;
+
   /// Si la pausa dura más que esto, al reanudar se reconecta para volver al vivo.
   static const _liveReconnectAfter = Duration(seconds: 30);
+  static const _maxReconnectAttempts = 8;
 
   Station? get current => _current;
   PlayerStatus get status => _status;
@@ -42,7 +53,7 @@ class RadioPlayer extends ChangeNotifier {
   String? get nowPlaying => _nowPlaying;
 
   String get statusLabel => switch (_status) {
-        PlayerStatus.loading => 'Conectando…',
+        PlayerStatus.loading => _reconnectAttempts > 0 ? 'Reconectando…' : 'Conectando…',
         PlayerStatus.playing => _nowPlaying ?? 'En vivo',
         PlayerStatus.paused => 'En pausa',
         PlayerStatus.error => _errorMessage ?? 'No se pudo reproducir',
@@ -65,8 +76,16 @@ class RadioPlayer extends ChangeNotifier {
   }
 
   Future<void> pause() async {
+    _wantsPlaying = false;
+    _reconnectTimer?.cancel();
     _pausedAt = DateTime.now();
+    unawaited(PlaybackLocks.release());
     await _player.pause();
+    // Si estaba esperando para reconectar, el reproductor no emite cambios.
+    if (_player.processingState == ProcessingState.idle && _current != null) {
+      _status = PlayerStatus.paused;
+      notifyListeners();
+    }
   }
 
   Future<void> resume() async {
@@ -74,10 +93,13 @@ class RadioPlayer extends ChangeNotifier {
     if (station == null) return;
     final pausedFor =
         _pausedAt == null ? Duration.zero : DateTime.now().difference(_pausedAt!);
-    if (pausedFor > _liveReconnectAfter) {
+    if (pausedFor > _liveReconnectAfter ||
+        _player.processingState == ProcessingState.idle) {
       await _load(station);
     } else {
       _pausedAt = null;
+      _wantsPlaying = true;
+      unawaited(PlaybackLocks.acquire());
       _startPlayback(station);
     }
   }
@@ -88,11 +110,15 @@ class RadioPlayer extends ChangeNotifier {
   }
 
   Future<void> stop() async {
+    _wantsPlaying = false;
+    _reconnectTimer?.cancel();
+    _reconnectAttempts = 0;
     _current = null;
     _status = PlayerStatus.idle;
     _nowPlaying = null;
     _errorMessage = null;
     _pausedAt = null;
+    unawaited(PlaybackLocks.release());
     notifyListeners();
     await _player.stop();
   }
@@ -102,13 +128,20 @@ class RadioPlayer extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<void> _load(Station station) async {
+  Future<void> _load(Station station, {bool reconnecting = false}) async {
+    _reconnectTimer?.cancel();
+    if (!reconnecting) {
+      _reconnectAttempts = 0;
+      _hasPlayed = false;
+      _nowPlaying = null;
+    }
     _current = station;
     _status = PlayerStatus.loading;
-    _nowPlaying = null;
     _errorMessage = null;
     _pausedAt = null;
+    _wantsPlaying = true;
     notifyListeners();
+    unawaited(PlaybackLocks.acquire());
 
     try {
       final uri = Uri.parse(station.streamUrl);
@@ -126,22 +159,47 @@ class RadioPlayer extends ChangeNotifier {
       await _player.setAudioSource(source);
 
       // El usuario cambió de emisora o pausó mientras cargaba.
-      if (!isCurrent(station) || _pausedAt != null) return;
+      if (!isCurrent(station) || !_wantsPlaying) return;
       _startPlayback(station);
-      onStationStarted?.call(station);
+      if (!reconnecting) onStationStarted?.call(station);
     } on PlayerInterruptedException {
       // Se eligió otra emisora antes de terminar de cargar: no es un error.
     } catch (e) {
       if (!isCurrent(station)) return;
       debugPrint('Error al cargar ${station.name}: $e');
-      _setError('No se pudo conectar con ${station.name}. Puede estar fuera del aire.');
+      _handleFailure('No se pudo conectar con ${station.name}. Puede estar fuera del aire.');
     }
   }
 
   void _startPlayback(Station station) {
     // play() solo termina cuando se pausa, por eso no se espera.
     _player.play().catchError((Object e) {
-      if (isCurrent(station)) _setError('Se perdió la conexión con la emisora.');
+      if (isCurrent(station)) _handleFailure('Se perdió la conexión con la emisora.');
+    });
+  }
+
+  /// Si la emisora ya estaba sonando, intenta reconectar sola; si no, muestra el error.
+  void _handleFailure(String message) {
+    if (_reconnectTimer?.isActive ?? false) return;
+    final station = _current;
+    final canReconnect = station != null &&
+        _wantsPlaying &&
+        _hasPlayed &&
+        _reconnectAttempts < _maxReconnectAttempts;
+
+    if (!canReconnect) {
+      _setError(message);
+      return;
+    }
+
+    _reconnectAttempts++;
+    final delay = Duration(seconds: math.min(2 * _reconnectAttempts, 15));
+    debugPrint('Reconectando ${station.name} en ${delay.inSeconds}s (intento $_reconnectAttempts)');
+    _status = PlayerStatus.loading;
+    _errorMessage = null;
+    notifyListeners();
+    _reconnectTimer = Timer(delay, () {
+      if (isCurrent(station) && _wantsPlaying) _load(station, reconnecting: true);
     });
   }
 
@@ -149,7 +207,8 @@ class RadioPlayer extends ChangeNotifier {
     if (_current == null || _status == PlayerStatus.error) return;
 
     if (state.processingState == ProcessingState.completed) {
-      _setError('La transmisión se interrumpió.');
+      // En una radio en vivo, "terminó" significa que se cortó la señal.
+      _handleFailure('La transmisión se interrumpió.');
       return;
     }
 
@@ -157,11 +216,16 @@ class RadioPlayer extends ChangeNotifier {
       ProcessingState.loading || ProcessingState.buffering => PlayerStatus.loading,
       ProcessingState.ready when state.playing => PlayerStatus.playing,
       // Listo pero aún sin play(): seguimos mostrando "Conectando…".
-      ProcessingState.ready when _status == PlayerStatus.loading && _pausedAt == null =>
+      ProcessingState.ready when _status == PlayerStatus.loading && _wantsPlaying =>
         PlayerStatus.loading,
       ProcessingState.ready => PlayerStatus.paused,
       _ => _status,
     };
+
+    if (next == PlayerStatus.playing) {
+      _hasPlayed = true;
+      _reconnectAttempts = 0;
+    }
 
     if (next != _status) {
       _status = next;
@@ -171,7 +235,7 @@ class RadioPlayer extends ChangeNotifier {
 
   void _onStreamError(Object error, StackTrace stackTrace) {
     debugPrint('Error de reproducción: $error');
-    if (_current != null) _setError('Se perdió la conexión con la emisora.');
+    if (_current != null) _handleFailure('Se perdió la conexión con la emisora.');
   }
 
   void _onIcyMetadata(IcyMetadata? metadata) {
@@ -184,17 +248,21 @@ class RadioPlayer extends ChangeNotifier {
   }
 
   void _setError(String message) {
+    _wantsPlaying = false;
     _status = PlayerStatus.error;
     _errorMessage = message;
+    unawaited(PlaybackLocks.release());
     notifyListeners();
   }
 
   @override
   void dispose() {
+    _reconnectTimer?.cancel();
     _stateSub.cancel();
     _eventSub.cancel();
     _icySub.cancel();
     _player.dispose();
+    PlaybackLocks.release();
     super.dispose();
   }
 }

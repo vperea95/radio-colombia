@@ -1,3 +1,5 @@
+import '../utils/departments.dart';
+
 /// Una emisora tal como la entrega la API de Radio Browser.
 class Station {
   const Station({
@@ -6,6 +8,7 @@ class Station {
     required this.streamUrl,
     this.favicon = '',
     this.state = '',
+    this.department = '',
     this.tags = const [],
     this.codec = '',
     this.bitrate = 0,
@@ -20,6 +23,9 @@ class Station {
 
   /// Departamento o ciudad reportada por la emisora.
   final String state;
+
+  /// Departamento deducido (ver utils/departments.dart). Puede estar vacío.
+  final String department;
   final List<String> tags;
   final String codec;
   final int bitrate;
@@ -35,17 +41,21 @@ class Station {
     }
 
     final resolved = str('url_resolved');
+    final name = str('name');
+    final state = str('state');
+    final tags = str('tags')
+        .split(',')
+        .map((t) => t.trim())
+        .where((t) => t.isNotEmpty)
+        .toList();
     return Station(
       id: str('stationuuid'),
-      name: str('name'),
+      name: name,
       streamUrl: resolved.isNotEmpty ? resolved : str('url'),
       favicon: str('favicon'),
-      state: str('state'),
-      tags: str('tags')
-          .split(',')
-          .map((t) => t.trim())
-          .where((t) => t.isNotEmpty)
-          .toList(),
+      state: state,
+      department: findDepartment(state: state, name: name, tags: tags),
+      tags: tags,
       codec: str('codec'),
       bitrate: integer('bitrate'),
       votes: integer('votes'),
@@ -55,7 +65,8 @@ class Station {
 
   /// Ej.: "Valle del Cauca, salsa, tropical".
   String get subtitle {
-    final parts = <String>[if (state.isNotEmpty) state, ...tags.take(2)];
+    final place = state.isNotEmpty ? state : department;
+    final parts = <String>[if (place.isNotEmpty) place, ...tags.take(2)];
     return parts.isEmpty ? 'Colombia' : parts.join(', ');
   }
 

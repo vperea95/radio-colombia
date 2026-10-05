@@ -34,7 +34,7 @@ jobs:
           cp plataforma/android/AndroidManifest.xml android/app/src/main/AndroidManifest.xml
           MAIN=$(find android/app/src/main -name MainActivity.kt)
           PKG=$(head -1 "$MAIN")
-          printf '%s\n\nimport com.ryanheise.audioservice.AudioServiceActivity\n\nclass MainActivity : AudioServiceActivity()\n' "$PKG" > "$MAIN"
+          { echo "$PKG"; tail -n +2 plataforma/android/MainActivity.kt; } > "$MAIN"
           cat "$MAIN"
 
       - name: Instalar dependencias
