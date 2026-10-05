@@ -1,0 +1,50 @@
+name: Compilar APK
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Descargar código
+        uses: actions/checkout@v4
+
+      - name: Instalar Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Instalar Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Generar carpeta android
+        run: |
+          flutter create --org co.radiocolombia --project-name radio_colombia --platforms=android .
+          rm -rf test
+
+      - name: Configurar audio en segundo plano
+        run: |
+          cp plataforma/android/AndroidManifest.xml android/app/src/main/AndroidManifest.xml
+          MAIN=$(find android/app/src/main -name MainActivity.kt)
+          PKG=$(head -1 "$MAIN")
+          printf '%s\n\nimport com.ryanheise.audioservice.AudioServiceActivity\n\nclass MainActivity : AudioServiceActivity()\n' "$PKG" > "$MAIN"
+          cat "$MAIN"
+
+      - name: Instalar dependencias
+        run: flutter pub get || flutter pub upgrade --major-versions
+
+      - name: Compilar APK
+        run: flutter build apk --release
+
+      - name: Publicar APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: radio-colombia-apk
+          path: build/app/outputs/flutter-apk/app-release.apk

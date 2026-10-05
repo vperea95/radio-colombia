@@ -1,0 +1,14 @@
+<!-- Pega estas claves dentro del <dict> principal de ios/Runner/Info.plist -->
+
+<!-- Audio en segundo plano -->
+<key>UIBackgroundModes</key>
+<array>
+    <string>audio</string>
+</array>
+
+<!-- Muchas emisoras transmiten por http (sin s) -->
+<key>NSAppTransportSecurity</key>
+<dict>
+    <key>NSAllowsArbitraryLoads</key>
+    <true/>
+</dict>
