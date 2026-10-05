@@ -1,5 +1,5 @@
+import 'package:audio_service/audio_service.dart';
 import 'package:flutter/material.dart';
-import 'package:just_audio_background/just_audio_background.dart';
 
 import 'player/radio_player.dart';
 import 'screens/home_screen.dart';
@@ -10,20 +10,31 @@ import 'theme.dart';
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  // Permite seguir escuchando con la pantalla apagada y muestra
-  // controles en la notificación y en la pantalla de bloqueo.
-  await JustAudioBackground.init(
-    androidNotificationChannelId: 'co.radiocolombia.audio',
-    androidNotificationChannelName: 'Reproducción de radio',
-    androidNotificationOngoing: true,
-  );
-
   final api = RadioApi();
   final favorites = FavoritesService();
   await favorites.load();
-  final player = RadioPlayer(
-    onStationStarted: (station) => api.registerClick(station.id),
-  );
+
+  RadioPlayer createPlayer() =>
+      RadioPlayer(onStationStarted: (station) => api.registerClick(station.id));
+
+  // El servicio de audio permite seguir escuchando con la pantalla apagada o
+  // fuera de la app, y muestra controles en la notificación y en la pantalla
+  // de bloqueo.
+  RadioPlayer player;
+  try {
+    player = await AudioService.init(
+      builder: createPlayer,
+      config: const AudioServiceConfig(
+        androidNotificationChannelId: 'co.radiocolombia.audio',
+        androidNotificationChannelName: 'Reproducción de radio',
+        androidNotificationOngoing: true,
+      ),
+    );
+  } catch (e) {
+    // Sin el servicio la radio solo suena con la app abierta, pero la app funciona.
+    debugPrint('No se pudo iniciar el servicio de audio: $e');
+    player = createPlayer();
+  }
 
   runApp(RadioColombiaApp(api: api, favorites: favorites, player: player));
 }

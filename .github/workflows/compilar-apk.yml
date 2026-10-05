@@ -32,6 +32,8 @@ jobs:
       - name: Configurar audio en segundo plano
         run: |
           cp plataforma/android/AndroidManifest.xml android/app/src/main/AndroidManifest.xml
+          mkdir -p android/app/src/main/res/raw
+          cp plataforma/android/keep.xml android/app/src/main/res/raw/keep.xml
           MAIN=$(find android/app/src/main -name MainActivity.kt)
           PKG=$(head -1 "$MAIN")
           { echo "$PKG"; tail -n +2 plataforma/android/MainActivity.kt; } > "$MAIN"

@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Evita que la compilación release borre los íconos de la notificación de
+     audio_service (solo se usan por nombre desde Dart). Sin ellos, en Android 13
+     o superior el servicio en primer plano no arranca y la radio se corta al
+     salir de la app o apagar la pantalla. El workflow copia este archivo a
+     android/app/src/main/res/raw/keep.xml. -->
+<resources xmlns:tools="http://schemas.android.com/tools"
+    tools:keep="@drawable/audio_service_*,@mipmap/ic_launcher" />

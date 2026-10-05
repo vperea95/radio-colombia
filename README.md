@@ -7,7 +7,8 @@ App en Flutter para escuchar emisoras colombianas en vivo, en celulares y tablet
 - Lista las emisoras de Colombia desde Radio Browser, un directorio comunitario gratuito y sin API key.
 - Buscador por nombre, ciudad o género (sin importar tildes).
 - Filtro por departamento y lista de favoritas guardada en el dispositivo.
-- Sigue sonando con la pantalla apagada, con controles en la notificación y en la pantalla de bloqueo.
+- Sigue sonando con la pantalla apagada o fuera de la app, con controles en la notificación y en la pantalla de bloqueo. Si la señal se cae, se reconecta sola.
+- Incluye una guía para quitar las restricciones de batería según la marca del celular.
 - Muestra la canción actual cuando la emisora la transmite.
 - En celular usa una lista; en tablet o en horizontal, una cuadrícula.
 - Si pausas más de 30 segundos, al reanudar se reconecta para volver al vivo.
@@ -42,7 +43,7 @@ Requiere Flutter 3.27 o superior.
    Si `pub get` se queja de versiones, deja que Flutter elija las más recientes compatibles:
 
    ```bash
-   flutter pub add just_audio just_audio_background http shared_preferences
+   flutter pub add just_audio audio_service audio_session http shared_preferences
    ```
 
 ## Generar el instalable
@@ -61,7 +62,8 @@ lib/
   models/station.dart          Modelo de emisora
   services/radio_api.dart      Cliente de Radio Browser (con servidores de respaldo)
   services/favorites_service.dart  Favoritas en SharedPreferences
-  player/radio_player.dart     Lógica de reproducción (just_audio)
+  player/radio_player.dart     Reproducción (just_audio) y notificación (audio_service)
+  player/background_support.dart  Funciones de Android para el segundo plano
   screens/home_screen.dart     Pantalla principal
   widgets/                     Tarjeta de emisora, mini reproductor, reproductor completo
 ```

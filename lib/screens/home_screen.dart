@@ -1,11 +1,14 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../models/station.dart';
+import '../player/background_support.dart';
 import '../player/radio_player.dart';
 import '../services/favorites_service.dart';
 import '../services/radio_api.dart';
 import '../theme.dart';
 import '../utils/text_utils.dart';
+import '../widgets/background_help_sheet.dart';
 import '../widgets/full_player_sheet.dart';
 import '../widgets/mini_player.dart';
 import '../widgets/station_tile.dart';
@@ -30,6 +33,7 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen> {
   final _searchController = TextEditingController();
+  late final AppLifecycleListener _lifecycle;
 
   List<Station> _stations = const [];
   List<_Department> _departments = const [];
@@ -39,16 +43,47 @@ class _HomeScreenState extends State<HomeScreen> {
   String? _departmentKey;
   bool _onlyFavorites = false;
 
+  /// Android puede cortar la radio para ahorrar batería.
+  bool _backgroundRestricted = false;
+
   @override
   void initState() {
     super.initState();
+    _lifecycle = AppLifecycleListener(onResume: _checkBackground);
+    _checkBackground();
     _load();
   }
 
   @override
   void dispose() {
+    _lifecycle.dispose();
     _searchController.dispose();
     super.dispose();
+  }
+
+  Future<void> _checkBackground() async {
+    final restricted = !await BackgroundSupport.isIgnoringBatteryOptimizations();
+    if (mounted && restricted != _backgroundRestricted) {
+      setState(() => _backgroundRestricted = restricted);
+    }
+  }
+
+  Future<void> _openBackgroundHelp() async {
+    await showBackgroundHelp(context);
+    await _checkBackground();
+  }
+
+  void _onStationTap(Station station) {
+    widget.player.togglePlay(station);
+    maybeShowBackgroundHelp(context).then((_) => _checkBackground());
+  }
+
+  /// Atrás no cierra la app si hay una emisora: la manda al fondo y sigue sonando.
+  Future<void> _onBack() async {
+    if (widget.player.current != null && await BackgroundSupport.moveTaskToBack()) {
+      return;
+    }
+    await SystemNavigator.pop();
   }
 
   Future<void> _load() async {
@@ -121,56 +156,72 @@ class _HomeScreenState extends State<HomeScreen> {
   Widget build(BuildContext context) {
     final listenable = Listenable.merge([widget.player, widget.favorites]);
 
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('Radio Colombia'),
-        actions: [
-          IconButton(
-            tooltip: 'Actualizar lista',
-            onPressed: _loading ? null : _load,
-            icon: const Icon(Icons.refresh_rounded),
+    return PopScope(
+      canPop: false,
+      onPopInvokedWithResult: (didPop, _) {
+        if (!didPop) _onBack();
+      },
+      child: Scaffold(
+        appBar: AppBar(
+          title: const Text('Radio Colombia'),
+          actions: [
+            if (BackgroundSupport.isAndroid)
+              IconButton(
+                tooltip: 'Escuchar con la pantalla apagada',
+                onPressed: _openBackgroundHelp,
+                icon: Badge(
+                  isLabelVisible: _backgroundRestricted,
+                  smallSize: 8,
+                  child: const Icon(Icons.battery_saver_outlined),
+                ),
+              ),
+            IconButton(
+              tooltip: 'Actualizar lista',
+              onPressed: _loading ? null : _load,
+              icon: const Icon(Icons.refresh_rounded),
+            ),
+          ],
+          bottom: const PreferredSize(
+            preferredSize: Size.fromHeight(4),
+            child: FlagStripe(),
           ),
-        ],
-        bottom: const PreferredSize(
-          preferredSize: Size.fromHeight(4),
-          child: FlagStripe(),
         ),
-      ),
-      body: Column(
-        children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
-            child: SearchBar(
-              controller: _searchController,
-              hintText: 'Buscar emisora, ciudad o género',
-              leading: const Icon(Icons.search_rounded),
-              elevation: const WidgetStatePropertyAll(0),
-              trailing: [
-                if (_query.isNotEmpty)
-                  IconButton(
-                    tooltip: 'Borrar búsqueda',
-                    onPressed: () {
-                      _searchController.clear();
-                      setState(() => _query = '');
-                    },
-                    icon: const Icon(Icons.close_rounded),
-                  ),
-              ],
-              onChanged: (value) => setState(() => _query = value),
+        body: Column(
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
+              child: SearchBar(
+                controller: _searchController,
+                hintText: 'Buscar emisora, ciudad o género',
+                leading: const Icon(Icons.search_rounded),
+                elevation: const WidgetStatePropertyAll(0),
+                trailing: [
+                  if (_query.isNotEmpty)
+                    IconButton(
+                      tooltip: 'Borrar búsqueda',
+                      onPressed: () {
+                        _searchController.clear();
+                        setState(() => _query = '');
+                      },
+                      icon: const Icon(Icons.close_rounded),
+                    ),
+                ],
+                onChanged: (value) => setState(() => _query = value),
+              ),
             ),
-          ),
-          _buildFilters(),
-          Expanded(
-            child: ListenableBuilder(
-              listenable: listenable,
-              builder: (context, _) => _buildContent(),
+            _buildFilters(),
+            Expanded(
+              child: ListenableBuilder(
+                listenable: listenable,
+                builder: (context, _) => _buildContent(),
+              ),
             ),
-          ),
-        ],
-      ),
-      bottomNavigationBar: ListenableBuilder(
-        listenable: widget.player,
-        builder: (context, _) => MiniPlayer(player: widget.player, onOpen: _openFullPlayer),
+          ],
+        ),
+        bottomNavigationBar: ListenableBuilder(
+          listenable: widget.player,
+          builder: (context, _) => MiniPlayer(player: widget.player, onOpen: _openFullPlayer),
+        ),
       ),
     );
   }
@@ -250,7 +301,7 @@ class _HomeScreenState extends State<HomeScreen> {
           isCurrent: player.isCurrent(station),
           status: player.isCurrent(station) ? player.status : PlayerStatus.idle,
           isFavorite: widget.favorites.isFavorite(station.id),
-          onTap: () => player.togglePlay(station),
+          onTap: () => _onStationTap(station),
           onFavorite: () => widget.favorites.toggle(station.id),
         );
 
